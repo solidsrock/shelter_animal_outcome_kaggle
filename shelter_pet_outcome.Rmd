@@ -1,0 +1,246 @@
+---
+title: "Shelter Pets Outcome Prediction Project Report"
+author: "Song Tang, Jiale Sun, Kyuri Song"
+date: "2017.4.12"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+### *Introduction*
+Every year, approximately 7.6 million companion animals end up in US shelters. Many animals are given up as unwanted by their owners, while others are picked up after getting lost or taken out of cruelty situations. Many of these animals find forever families to take them home, but just as many are not so lucky. 2.7 million dogs and cats are euthanized in the US every year.
+
+For better to take care of each animal in shelters and provide more apprepriate help to find a new home for different animals, we will train the data to build multiple models and see which model is more reliable, collect and conclude insights of data to predict others shelter animal's outcome. The train and test dataset both from [Kaggle Shelter Animal Outcome](https://www.kaggle.com/c/shelter-animal-outcomes/data).The final prediction result is a csv file contains each animal ID, all anaimals outcome type, and the probability for each outcome type.
+
+#### overview of shelter animal dataset
+```{r}
+library(readr)
+#inport train and test dataset
+train<- read.csv('train.csv', header = T, stringsAsFactors = F, na.strings = c(""))
+test<- read.csv('test.csv', header = T, stringsAsFactors = F, na.strings = c(""))
+names(train)
+nrow(train)
+
+```
+In the shelter animals train dataset, there are ten columns, which are AnimalID, Name, DateTime, OutcomeType, AnimalType, SexuponOutcome, AgeuponOutcome, Breed and Color. Totally there are 26729 rows data in the train dataset.
+In AnimalID indicate the ID of each animal. Name column show the name of each animal, and also there are lots of missing value in Name column. DateTime indicate the date and time for each animal accepted by the shelter. OutcomeType is the outcome for each animal from shelter, only five outcome types, such as Return to owner, Euthanasia, Adoption, Transfer and died. OutcomeSubtype is a more specific explanation for OutcomeType, also there are lots of missing value in this column. AnimalType column is the type of each animals, dog or cat. SexuponOutcome column demonstrate the sex and attribute of each animals, for example, Neutered Male, Intact Male, Spayed Female, Intact Female and unknown. AgeuponOurcome imply the age for each animals when they are transferred from the shelter.Breed column indicate the breed for each animals and color show the detailed color for each animal.
+<br />
+```{r}
+names(test)
+nrow(test)
+```
+```{r}
+setdiff(names(train), names(test)) # columns in train but not in test
+```
+In the test data set, there are 11456 rows and the difference between test and train data set is three columns 
+
+<br />
+```{r}
+#show the sum of null valve in each columns in train data 
+sapply(train,function(x) sum(is.na(x)))
+```
+There are lots of missing value is `Name` and `OutcomeSubtype` columns, also in `AgeuponOutcome` column. In Name column, there are too much missing value and also the Names maybe not the importran factor to affect the outcome of animals. 
+<br />
+```{r}
+# show the unique value for each column.
+sapply(train, function(x) length(unique(x)))
+```
+we can find that the there are losts of complex value in `Name`, `OutcomeSubtype`, `SexuponOutcome`, `AgeuponOutcome`, `Breed` and `Color` column. We need to clean up and narrow down the multiple unique varivalbes to a smaller classified variables set before we start explore dataset and building the models.
+<br />
+<br />
+
+#### Summary of statistics (Plots)
+
+#### Import nacessary packages
+```{r, message=FALSE, warning=FALSE}
+#Load all the necessary packages to explore data.
+library(ggplot2) #data visualization
+library(dplyr) # for dataset manipulation
+library(ggthemes)# data visualization
+library(lubridate)# modify the format of dates
+library(rpart) # rpart for imputation create decision tree
+library(randomForest) # classification algorithm
+```
+
+####Data cleanup and modify to standstard format
+In this part, we will clean up the train dataset which have null value and complex unit. We will also cleanup the data in test dataset in the same way.
+
+- eliminate the null value in the `Name` and `OutcomeSubtype` column and replace it with boolean value.
+```{r, message=FALSE, warning=FALSE}
+library(readr)
+#re-load train dataset with setting in empty value as "0"
+#cleanup and eliminate NA value in the train dataset and convert it into 0 or 1 value
+train<- read.csv('train.csv', header = T, stringsAsFactors = F, na = 0)
+train$Name = ifelse(nchar(train$Name) == 0, "Nameless", train$Name)
+train$Name=ifelse(train$Name == 'Nameless', 0, 1)
+#Replace all null value in the OutcomeSubType colum with 'Other' value
+train$OutcomeSubtype = ifelse(nchar(train$OutcomeSubtype) == "0", 'Other', train$OutcomeSubtype)
+```
+- modify the `AgeuponOutcome` column to unified day unit of age, and then translate age in day unit to a age slot to identify the status of each animal.
+```{r, message=FALSE, warning=FALSE}
+# there are 18 missing value in AgeuponOutcome column, we find that the  young age stage animals has 
+#the most number, so we set the empty value in AgeuponOutcome column is '7 months', which is for the young stage.
+train$AgeuponOutcome=ifelse(nchar(train$AgeuponOutcome) == 0, '7 months', train$AgeuponOutcome)
+# retrive the time value
+train$TimeValue = sapply(train$AgeuponOutcome, function(x) strsplit(x, split = ' ')[[1]][1])
+# retrive the time unit,like years, months, days
+train$UnitofTime = sapply(train$AgeuponOutcome, function(x) strsplit(x, split = ' ')[[1]][2])
+#modify the plural number into singular. for example 'years' to 'year'
+train$UnitofTime = gsub('s', '', train$UnitofTime)
+train$UnitofTime = as.factor(train$UnitofTime) # convert the unit of time into factor
+train$TimeValue = as.numeric(train$TimeValue) #convert the value of time into interger
+
+#compute the age of each animal in day unit by converting TimeValue in days using 
+#the appropriate multiplier based on different unit.
+multiplier = ifelse(train$UnitofTime == 'day', 1, ifelse(train$UnitofTime == 'week', 7, 
+    ifelse(train$UnitofTime == 'month', 30, ifelse(train$UnitofTime == 'year', 365, NA))))
+train$AgeinDays = multiplier * train$TimeValue
+
+#then we convert the AgeinDays into more understanable formate.
+train$AgeStage <- ifelse(train$AgeinDays > 1 & train$AgeinDays < 180, 'Baby',
+                  ifelse(train$AgeinDays > 179 & train$AgeinDays < 1826 , 'Young',
+                  ifelse(train$AgeinDays > 1825 & train$AgeinDays < 3285, 'Adult', 'Old' )))
+ggplot(train, aes(factor(AgeStage)))+geom_bar(col="black", alpha = .3)
+```
+<br />
+Note that `train$AgeinDays` is created to store the age in the unit of day, and `train$Ageslot` is created to indicate the status of each animal. 
+
+
+- then the `DateTime` column indicate the time when animal was acccpeted by shelter. we can extract time variables from date (use the "lubridate" package)
+```{r, echo=TRUE, warning=FALSE}
+train$Hour <- hour(train$DateTime)
+train$Month <- month(train$DateTime)
+
+#In this part we extract the Months of DateTime and translate it into the four seasons.
+train$AcceptedSeasons <- ifelse(train$Month > 1 & train$Month < 5, 'Spring',
+                  ifelse(train$Month > 4 & train$Month < 8 , 'Summer',
+                  ifelse(train$Month > 7 & train$Month < 11, 'Autumn', 'Winter' )))
+
+#also, maybe the time in day may affect the outcomes of animals
+train$AcceptedDayTime <- ifelse(train$Hour > 5 & train$Hour < 11, 'morning',
+                  ifelse(train$Hour > 10 & train$Hour < 13, 'noon',
+                  ifelse(train$Hour > 12 & train$Hour < 18, 'afternoon', 
+                  ifelse(train$Hour > 17 & train$Hour < 23, 'night', 'mid-night'))))
+```
+
+- Addithonly, we can find there are multiple sex attribute. we can divide it into two collumns, `isIntact` and `Sex`
+
+```{r, message=FALSE, warning=FALSE}
+# find the most frequent sex attribute to replace the missing value
+ggplot(train, aes(factor(SexuponOutcome)))+geom_bar(col="black", alpha = .3)
+# we conclude that the Neutered Male is the most common one
+train$SexuponOutcome = ifelse(train$SexuponOutcome == "Unknown", "Neutered Male", 
+                              train$SexuponOutcome)
+# Use "grepl" to look for "Intact". Neutered and spayed is the same meanings
+train$isIntact <- ifelse(grepl('Intact', train$SexuponOutcome), 'Intact',
+       ifelse(grepl('Unknown', train$SexuponOutcome), 'Neutered', 'Neutered')) 
+#replace the missing value with the most common Neutered Male.
+
+# Use "grepl" to look for sex
+train$Sex <- ifelse(grepl('Male', train$SexuponOutcome), 'Male',
+            ifelse(grepl('Female', train$SexuponOutcome), 'Female', 'Male'))
+```
+
+
+- after we check out that Breed and Color these two columns have too many level value. We have to unifiy the breed and color into a more general standard. so we can ignore some bias value. For example, we just devide the color and breed into two types, Pure and Mix. This method could dramatically decress the complexity of value.
+
+```{r, message=FALSE, warning=FALSE}
+length(unique(train$Color)) #number of unique colors we're dealing with
+#Use "grepl" method to look for "Mix" and "/" to identify the pure and mix type.
+train$Breed <- ifelse(grepl('Mix', train$Breed), 'MixBreed', 'PureBreed')
+train$Color <- ifelse(grepl('/', train$Color), 'MixColor', 'PureColor')
+```
+<br />
+
+- then we need to write the modified table into csv file and saved to disk.
+```{r, eval=FALSE, include=FALSE}
+#write.csv(train, file="newtrain.csv")
+```
+
+- **After we finish the cleanup of train dataset, we should also apply the same cleanup method to the test dataset**
+
+### *Data story telling* 
+
+Before we start create model and predict the outcome of animals. We should exploe the data distribution and tell a data story.
+
+- plot the relation between anaimal type and the outcome of animals.we can conclude that, the number of dogs are more than the number of cats, also the dog have more possible to be returned to their original owner and be adopted. Generally dogs are more popular than the cats. However, there are more than 5000 cats are transferd.
+```{r, echo=TRUE}
+# plot the outcome of different type of animals
+ggplot(train, aes(factor(AnimalType),fill = OutcomeType))+
+  geom_bar(col="black", alpha = .3)+facet_wrap(~AgeStage)+
+  labs(x="Animal Type", title="outcome distribution", y="count of animal")
+```
+
+***
+- next we wanna know how the breed, color and the animal type affect the outcomes of shelter animals.From the following plot, the number of mix breed animals are more than the number of pure breed animals. Also most of the mix breed animal are transfered or adopted.
+```{r, echo=TRUE}
+ggplot(train, aes(factor(AnimalType),fill = OutcomeType))+
+  geom_bar(col="black", alpha = .3)+facet_grid(Breed ~ Color)+
+  labs(x="Animal Type", y="count of animal")
+```
+
+
+***
+- To explore
+```{r, message=FALSE, warning=FALSE}
+ggplot(train, aes(x=factor(isIntact), y=Month))+ylim(1,12)+
+  geom_violin(scale = "count",adjust= .8, aes(fill=factor(AnimalType)), 
+              draw_quantiles = c(0.25, 0.5, 0.75), alpha= .2)+facet_grid(OutcomeType ~ Sex)+
+  labs(x="Intact or Neutered")+labs(title="violin plot")+labs(y="Accepted Month")
+```
+
+
+***
+- from the following 
+```{r, message=FALSE, warning=FALSE}
+ggplot(train, aes(x=Hour,fill = AnimalType))+xlim(0,24)+
+  geom_histogram(breaks=seq(0, 100, by = 5), col="black", alpha = .3)+facet_grid(isIntact~Sex)+
+  labs(x="Day Time", title="Histogram")
+```
+
+
+***
+- To understand how the accepted daytime or season make an apparent difference in outcome, we plot the relation between the day and seasons. Season might be not a very important avariable to effect the outcome of animals.
+```{r, message=FALSE, warning=FALSE}
+ggplot(train, aes(x=factor(AcceptedSeasons),y=Hour))+geom_boxplot(aes(fill = AnimalType), alpha=.3)+facet_wrap(~OutcomeType)+
+labs(title="Wisker-Box")+labs(y="day hour")+labs(x="season")
+```
+
+
+### *Create model and hypothesis*
+#### Modified dataset overview
+```{r}
+#show the unique value in each column
+sapply(train, function(x) length(unique(x)))
+#There are no empty value in train dataset
+sapply(train,function(x) sum(is.na(x)))
+nrow(train) # we still have 26729 rows in the train data set after cleanup
+```
+<br />
+Finally, we can delete all the column which have nothing to do with the outcomes of animals
+```{r, message=FALSE, warning=FALSE}
+#we just keep the avliable columns.
+train$AnimalID<-NULL
+train$DateTime<-NULL # we have already translate it into a useful formate
+train$AgeuponOutcome<-NULL
+train$SexuponOutcome<-NULL
+train$Year<-NULL
+train$OutcomeSubtype<-NULL
+```
+
+
+#### Data Lineage
+<br />
+
+
+#### Modle 1: Logistic Regression
+
+
+#### Result snapshoot
+You can also embed plots, for example: following is the picture
+![result](/Users/VanessaTong/Documents/2017Spring/Data Analytic/term-project/1.png)
+
+
+### *Conclusion*
+
+

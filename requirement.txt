@@ -1,0 +1,30 @@
+
+Below is the outline for the final project
+
+Please create a final report and presentation based on the outline below
+
+Introduction
+
+       overview of the shelter data set
+
+       summary stats
+
+Data story
+
+       exploratory plots
+
+       what are your observations?
+
+Model
+
+       Explain the data lineage - did you format the data to build your model, changed data types, made new variables etc....
+
+       training results - confusion matrix TP rate ,error rate, accuracy
+
+       Did you build and train multiple models if so explain what you did differently in  each model and why
+
+       include Kaggle results for each model 
+
+Conclusion
+
+       What did you learn about the fate of dogs and cats at the shelter?
